@@ -1,0 +1,12 @@
+# OIS (.NET) 构建产物
+bin/
+obj/
+*.user
+*.suo
+
+# 交接物：docs/ 下仅 docs/tasks/ 纳入版本控制
+/docs/*
+!/docs/tasks/
+
+# 其他
+*.log
