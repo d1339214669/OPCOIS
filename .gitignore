@@ -10,3 +10,9 @@ obj/
 
 # 其他
 *.log
+
+# 运行时存储目录（DICOM 实际落盘，勿提交样例影像/数据）
+/storage/
+
+# Visual Studio 本地设置
+/.vs/
