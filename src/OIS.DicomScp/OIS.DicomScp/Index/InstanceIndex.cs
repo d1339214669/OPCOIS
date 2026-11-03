@@ -40,7 +40,16 @@ public sealed class InstanceIndex
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync();
         await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync();
+        try
+        {
+            await cmd.ExecuteNonQueryAsync();
+        }
+        catch (PostgresException ex) when (ex.SqlState == "42P07")
+        {
+            // 42P07 = duplicate_table/index：并发启动/多实例同时 `CREATE TABLE/INDEX IF NOT EXISTS` 时,
+            // PostgreSQL 目录可能竞态报"关系已存在"。此时 DDL 已由对端实例完成，属幂等预期内，忽略即可（AC-02）。
+            _logger.LogDebug("建表/建索引并发竞态（已由其他实例创建），忽略: {Message}", ex.Message);
+        }
 
         _logger.LogInformation("已执行幂等建表（Schema.sql）");
     }
@@ -119,4 +128,51 @@ ON CONFLICT (sop_instance_uid) DO NOTHING";
         var result = await cmd.ExecuteScalarAsync(ct);
         return result is null ? 0 : Convert.ToInt64(result);
     }
+
+    /// <summary>
+    /// 按 SOPInstanceUID 查找实例的元数据（含 <c>internal_id</c> 与 <c>file_path</c>，AC-06）。
+    /// 仅返回库中该 UID 的一行；不存在时返回 <c>null</c>（不抛未处理异常，AC-06）。
+    /// </summary>
+    /// <returns>匹配的 <see cref="InstanceMetadata"/>（至少含 InternalId/FilePath），未找到返回 null。</returns>
+    public async Task<InstanceMetadata?> FindBySopInstanceUidAsync(string sopInstanceUid, CancellationToken ct = default)
+    {
+        const string sql = @"
+SELECT internal_id, sop_instance_uid, sop_class_uid, patient_id, patient_name,
+       study_instance_uid, series_instance_uid, modality, study_date, study_time,
+       study_description, series_number, instance_number, file_path, file_size_bytes
+FROM dicom_instance
+WHERE sop_instance_uid = @uid
+LIMIT 1";
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("uid", sopInstanceUid);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            return null;
+
+        var meta = new InstanceMetadata
+        {
+            InternalId = reader.GetString(0),
+            SopInstanceUid = reader.GetString(1),
+            SopClassUid = GetOrNull(reader, 2),
+            PatientId = GetOrNull(reader, 3),
+            PatientName = GetOrNull(reader, 4),
+            StudyInstanceUid = GetOrNull(reader, 5),
+            SeriesInstanceUid = GetOrNull(reader, 6),
+            Modality = GetOrNull(reader, 7),
+            StudyDate = GetOrNull(reader, 8),
+            StudyTime = GetOrNull(reader, 9),
+            StudyDescription = GetOrNull(reader, 10),
+            SeriesNumber = GetOrNull(reader, 11),
+            InstanceNumber = GetOrNull(reader, 12),
+            FilePath = reader.GetString(13),
+            FileSizeBytes = reader.IsDBNull(14) ? null : reader.GetInt64(14),
+        };
+        return meta;
+    }
+
+    private static string? GetOrNull(NpgsqlDataReader reader, int ordinal)
+        => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 }
