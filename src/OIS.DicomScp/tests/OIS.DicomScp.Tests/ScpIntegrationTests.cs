@@ -14,6 +14,7 @@ namespace OIS.DicomScp.Tests;
 /// 注：fo-dicom 5.2.6 的 SCU 在 SendAsync 完成且未被拒绝即视为成功；
 /// C-STORE 成功以“文件落盘 + 索引行出现”这一副作用断言（AC-04/05/06 的核心）。
 /// </summary>
+[Collection("ScuScpIntegration")]
 public class ScpIntegrationTests : IAsyncLifetime
 {
     private const string ConnString = "Host=localhost;Port=5432;Username=postgres;Database=dicom";

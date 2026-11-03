@@ -1,6 +1,8 @@
-# OIS.DicomScp — DICOM Storage SCP 核心存储层 (task-001)
+# OIS.DicomScp — DICOM Storage SCP 核心存储层 (task-001) + 出站 SCU (task-002)
 
 用 fo-dicom 实现的 **DICOM Storage SCP**，接收 C-ECHO / C-STORE，按 **Orthanc 式** 匿名化落盘，并把元数据抽离到 PostgreSQL 索引库。
+
+**task-002 新增**：作为 **SCU（Service Class User）** 向可配置的**远程 SCP**（PACS / 其他 OIS / TPS）发起 C-ECHO（连通性验证）与 C-STORE（转发本地已存实例），并把每次转发结果写入 `forward_log` 日志表（成功/失败各一行）。
 
 ## 目录结构
 
@@ -127,3 +129,67 @@ psql -h localhost -p 5432 -U postgres -d dicom -c 'SELECT internal_id, sop_insta
 - **AET 匹配（AC-08）**：fo-dicom 5.2.6 默认不强制校验 called AE 是否等于配置 AET；SCP 会在日志中记录对端 calling AE。若需要严格 `-aec` 白名单校验，需在后续 task 扩展 `OnReceiveAssociationRequestAsync`。
 - fo-dicom 5.2.6 目标框架为 `.NET Standard 2.0`，在 .NET 10 下正常引用运行（已实测，无兼容问题）。
 - 本任务**不做** C-FIND / C-MOVE / SCU 转发 / WPF UI（见 spec §5）。
+
+---
+
+# task-002 出站 SCU（转发 / 推送）
+
+OIS 作为 **SCU** 主动向配置的远端 SCP 发起连接，实现 C-ECHO（连通性验证）与 C-STORE（转发本地已存实例）。
+
+## 配置（appsettings.json 新增 `Scu` 节）
+
+```jsonc
+{
+  "Scu": {
+    "CallingAeTitle": "OIS",      // SCU 侧默认 calling AE（fallback）
+    "RemoteScps": [               // 远程 SCP 目标列表，可 0..n 个
+      { "Name": "TestPacs", "Host": "127.0.0.1", "Port": 11113,
+        "CalledAeTitle": "PACS", "CallingAeTitle": "OIS", "Protocol": "DICOM" }
+    ]
+  }
+}
+```
+
+- `Name` 是定位目标的关键，**必须唯一**（重复启动报错，AC-01）。
+- 配 0 / 1 / 多目标均可正常启动；不配 `RemoteScps`（或空数组）时出站能力可用但无可选目标。
+- **calling AE fallback 链**（AC-08 写明）：目标 `CallingAeTitle` → `Scu:CallingAeTitle` → `Scp.AeTitle` → 空串（由 fo-dicom 生成）。
+- `Protocol` 预留，本期仅支持 `"DICOM"`。
+
+## 命令行触发
+
+```bash
+# 启动 SCP（默认，兼容 task-001）
+dotnet run --project OIS.DicomScp/OIS.DicomScp.csproj -- scp
+
+# C-ECHO 验证到某远程 SCP（成功 exit=0，失败 exit=1）
+dotnet run ... -- echo-scu --remote <Name>
+
+# C-STORE 转发：按内部 ID 或按 SOPInstanceUID 推送
+# 以下 ... 表示 OIS.DicomScp/OIS.DicomScp.csproj 项目路径
+dotnet run ... -- store-scu --remote <Name> --id <internalId>
+dotnet run ... -- store-scu --remote <Name> --uid <sopInstanceUid>
+```
+
+## SCU 服务核心接口（`Scu/` 目录）
+
+- `IDicomScuService`：`EchoAsync`（C-ECHO）、`StoreByInternalIdAsync` / `StoreBySopInstanceUidAsync`（C-STORE 转发）。
+- `DicomScuService`：fo-dicom `DicomClient` 实现。**成功与否看响应 `response.Status`**（非“不抛异常即成功”）；`SendAsync` 完成且响应 `Status==Success` 才算成功。
+- `RemoteScpRepository`：从配置读取并校验 `RemoteScps`（Name 唯一性、host/port/Protocol 合法性）。
+- `IForwardLog` / `ForwardLog`：写 `forward_log` 表（成功/失败各一行）。
+- `IRemoteForwarder` / `IMoveScu`：Study/Series 批转发、C-MOVE 拉取的**纯签名占位**，本期不实现。
+
+## 转发内容 = 原文（无损闭环，AC-04/AC-08）
+
+- 从本地存储文件目录按 `file_path` + 存储根目录解析绝对路径，`DicomFile.Open` 读取原文件。
+- `DicomCStoreRequest(file)` 原样发送：不重编码、不改 UID、`StudyDate` 保持 `YYYYMMDD` 原样。
+
+## forward_log 转发记录（AC-05）
+
+每次 C-STORE 转发写一行（成功 `status='success'`，失败 `status='failed'`），失败必须可见。
+
+```bash
+psql -h localhost -p 5432 -U postgres -d dicom -c \
+  "SELECT id, remote_scp_name, internal_id, sop_instance_uid, status, detail, forwarded_at FROM forward_log ORDER BY id DESC LIMIT 10;"
+```
+
+- 同实例重复转发**追加多行**（不覆盖首次记录；去重策略由调用方决定）。
