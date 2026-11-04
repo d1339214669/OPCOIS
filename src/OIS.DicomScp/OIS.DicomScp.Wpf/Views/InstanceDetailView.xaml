@@ -1,0 +1,38 @@
+<UserControl x:Class="OIS.DicomScp.Wpf.Views.InstanceDetailView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="选中实例：" VerticalAlignment="Center" Margin="0,0,4,0" />
+            <TextBlock Text="{Binding SelectedSummary}" VerticalAlignment="Center" Margin="0,0,16,0" />
+            <Button x:Name="BtnLoad" Content="执行核对" Width="80" />
+            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="16,0,0,0" />
+        </StackPanel>
+
+        <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding Report}"
+                  IsReadOnly="True"
+                  AutoGenerateColumns="False"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="All">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="字段" Binding="{Binding Field}" Width="180" />
+                <DataGridTextColumn Header="文件值（fo-dicom 原样）" Binding="{Binding FileValue}" Width="*" />
+                <DataGridTextColumn Header="库值（原样）" Binding="{Binding DbValue}" Width="*" />
+                <DataGridTextColumn Header="结果" Binding="{Binding ResultText}" Width="80" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <TextBlock Grid.Row="2"
+                   Text="{Binding ErrorText}"
+                   Foreground="Red"
+                   Margin="0,6,0,0"
+                   TextWrapping="Wrap" />
+    </Grid>
+</UserControl>

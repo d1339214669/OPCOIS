@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\OIS.DicomScp\OIS.DicomScp.csproj" />
+    <ProjectReference Include="..\..\OIS.DicomScp.Core\OIS.DicomScp.Core.csproj" />
   </ItemGroup>
 
 </Project>

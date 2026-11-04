@@ -1,0 +1,90 @@
+<UserControl x:Class="OIS.DicomScp.Wpf.Views.RemoteScpsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 左：目标列表 + 增删 -->
+        <Grid Grid.Row="0" Grid.Column="0" Margin="0,0,8,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <ListBox ItemsSource="{Binding Items}"
+                     SelectedItem="{Binding Selected, Mode=TwoWay}"
+                     DisplayMemberPath="DisplayName" />
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
+                <Button x:Name="BtnAdd" Content="新增" Width="64" Margin="0,0,8,0" />
+                <Button x:Name="BtnDelete" Content="删除选中" Width="80" />
+            </StackPanel>
+        </Grid>
+
+        <!-- 右：选中目标编辑表单（绑定 Selected.*，随选中行联动） -->
+        <ScrollViewer Grid.Row="0" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,0,0,8">
+                <TextBlock Text="（未选中目标时无可编辑字段；点左侧列表或「新增」）" Foreground="Gray" Margin="0,0,0,8"
+                           Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}" />
+                <Grid IsEnabled="{Binding HasSelection}" Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="130" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Name（唯一）：" VerticalAlignment="Center" Margin="0,0,4,6" />
+                    <TextBox  Grid.Row="0" Grid.Column="1" Text="{Binding Selected.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Host：" VerticalAlignment="Center" Margin="0,0,4,6" />
+                    <TextBox  Grid.Row="1" Grid.Column="1" Text="{Binding Selected.Host, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Port：" VerticalAlignment="Center" Margin="0,0,4,6" />
+                    <TextBox  Grid.Row="2" Grid.Column="1" Text="{Binding Selected.Port, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="CalledAeTitle：" VerticalAlignment="Center" Margin="0,0,4,6" />
+                    <TextBox  Grid.Row="3" Grid.Column="1" Text="{Binding Selected.CalledAe, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="CallingAeTitle：" VerticalAlignment="Center" Margin="0,0,4,6" />
+                    <TextBox  Grid.Row="4" Grid.Column="1" Text="{Binding Selected.CallingAe, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6" />
+
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="Protocol：" VerticalAlignment="Center" Margin="0,0,4,0" />
+                    <TextBox  Grid.Row="5" Grid.Column="1" Text="{Binding Selected.Protocol, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 底：保存/加载 + 状态 + 错误 -->
+        <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,8,0,0">
+                <Button x:Name="BtnSave" Content="保存" Width="70" Margin="0,0,8,0" />
+                <Button x:Name="BtnReload" Content="重新加载" Width="80" Margin="0,0,16,0" />
+                <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Grid.Row="1"
+                       Text="{Binding ErrorText}"
+                       Foreground="Red"
+                       Margin="0,6,0,0"
+                       TextWrapping="Wrap" />
+        </Grid>
+    </Grid>
+</UserControl>

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using FellowOakDicom;
 using FellowOakDicom.Network;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,8 +26,10 @@ internal static class Program
 
         try
         {
-            // 1) 读取配置（appsettings.json，AC-01/task-001 AC-01）。手动读 JSON，避免额外依赖版本冲突。
-            var cfg = LoadConfig();
+            // 1) 读取配置（appsettings.json，AC-01/task-001 AC-01）。经 Core 的 IConfigStore 读取：
+            // 配置文件缺失时返回默认配置（端口 11112、AET OIS、D:\OIS\storage、本机 PG、无远程目标），与既有行为一致。
+            var cfg = await new ConfigStore(
+                Path.Combine(AppContext.BaseDirectory, "appsettings.json"), logger).LoadAsync();
             var port = cfg.Scp.Port is > 0 and <= 65535 ? cfg.Scp.Port!.Value : 11112;
             var aeTitle = string.IsNullOrWhiteSpace(cfg.Scp.AeTitle) ? "OIS" : cfg.Scp.AeTitle.Trim();
             var storageDir = string.IsNullOrWhiteSpace(cfg.Storage.Directory)
@@ -87,7 +88,7 @@ internal static class Program
     }
 
     /// <summary>默认：启动 SCP，兼容 task-001 行为。</summary>
-    private static async Task<int> RunScpAsync(int port, string aeTitle, ConfigRoot cfg, ILogger logger)
+    private static async Task<int> RunScpAsync(int port, string aeTitle, AppConfig cfg, ILogger logger)
     {
         logger.LogInformation(
             "配置: Port={Port}, AeTitle={AeTitle}；Storage SOP 白名单=[{Whitelist}]",
@@ -110,7 +111,7 @@ internal static class Program
     }
 
     /// <summary>echo-scu 子命令：对某远程 SCP 发 C-ECHO。</summary>
-    private static async Task<int> RunEchoScuAsync(ConfigRoot cfg, string[] args, FileStorage fileStorage,
+    private static async Task<int> RunEchoScuAsync(AppConfig cfg, string[] args, FileStorage fileStorage,
         InstanceIndex index, string fallbackCallingAe, ILogger logger)
     {
         var repo = new RemoteScpRepository(ToScuOptions(cfg.Scu));
@@ -129,7 +130,7 @@ internal static class Program
     }
 
     /// <summary>store-scu 子命令：按内部 ID 或 SOPInstanceUID 推送实例。</summary>
-    private static async Task<int> RunStoreScuAsync(ConfigRoot cfg, string[] args, FileStorage fileStorage,
+    private static async Task<int> RunStoreScuAsync(AppConfig cfg, string[] args, FileStorage fileStorage,
         InstanceIndex index, string fallbackCallingAe, ILogger logger)
     {
         var repo = new RemoteScpRepository(ToScuOptions(cfg.Scu));
@@ -194,46 +195,4 @@ internal static class Program
             CallingAeTitle = sc.CallingAeTitle,
             RemoteScps = sc.RemoteScps ?? new List<RemoteScpTarget>(),
         };
-
-    private static ConfigRoot LoadConfig()
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
-        if (!File.Exists(path))
-        {
-            // 配置文件缺失时使用默认配置（端口 11112、AET OIS、D:\OIS\storage、本机 PG、无远程目标）。
-            return new ConfigRoot();
-        }
-        return JsonSerializer.Deserialize<ConfigRoot>(File.ReadAllText(path)) ?? new ConfigRoot();
-    }
-
-    private sealed class ConfigRoot
-    {
-        public ScpSection Scp { get; set; } = new();
-        public ScuSection Scu { get; set; } = new();
-        public StorageSection Storage { get; set; } = new();
-        public PostgresSection Postgres { get; set; } = new();
-    }
-
-    private sealed class ScpSection
-    {
-        public int? Port { get; set; }
-        public string? AeTitle { get; set; }
-        public List<string>? StorageServiceSopClasses { get; set; }
-    }
-
-    private sealed class ScuSection
-    {
-        public string? CallingAeTitle { get; set; }
-        public List<RemoteScpTarget>? RemoteScps { get; set; } = new();
-    }
-
-    private sealed class StorageSection
-    {
-        public string? Directory { get; set; }
-    }
-
-    private sealed class PostgresSection
-    {
-        public string? ConnectionString { get; set; }
-    }
 }
