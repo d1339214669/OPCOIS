@@ -1,0 +1,16 @@
+<Window x:Class="OIS.DicomScp.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="OIS DICOM 管理控制台（task-003）"
+        Height="680" Width="1080"
+        MinHeight="480" MinWidth="760">
+    <Grid>
+        <TabControl x:Name="Tabs">
+            <TabItem Header="实例浏览" />
+            <TabItem Header="详情核对" />
+            <TabItem Header="远程SCP配置" />
+            <TabItem Header="转发 + 历史" />
+            <TabItem Header="服务状态" />
+        </TabControl>
+    </Grid>
+</Window>
