@@ -14,5 +14,5 @@ obj/
 # 运行时存储目录（DICOM 实际落盘，勿提交样例影像/数据）
 /storage/
 
-# Visual Studio 本地设置
-/.vs/
+# Visual Studio 本地设置（含 src/*/​.vs/，故不加根锚）
+.vs/

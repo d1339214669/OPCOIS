@@ -1,32 +1,38 @@
-# OIS.DicomScp — DICOM Storage SCP 核心存储层 (task-001) + 出站 SCU (task-002)
+# OIS.DicomScp — DICOM Storage SCP 核心存储层 (task-001) + 出站 SCU (task-002) + WPF 管理控制台 (task-003)
 
 用 fo-dicom 实现的 **DICOM Storage SCP**，接收 C-ECHO / C-STORE，按 **Orthanc 式** 匿名化落盘，并把元数据抽离到 PostgreSQL 索引库。
 
 **task-002 新增**：作为 **SCU（Service Class User）** 向可配置的**远程 SCP**（PACS / 其他 OIS / TPS）发起 C-ECHO（连通性验证）与 C-STORE（转发本地已存实例），并把每次转发结果写入 `forward_log` 日志表（成功/失败各一行）。
 
-## 目录结构
+## 目录结构（task-003 重组后：Core 类库 + 控制台 host + WPF 管理控制台）
 
 ```
 src/OIS.DicomScp/
 ├─ OIS.DicomScp.sln
 ├─ README.md
-├─ OIS.DicomScp/
-│  ├─ Program.cs                # 入口：读配置 → 幂等建表 → 启动 SCP
-│  ├─ appsettings.json          # 配置（端口/AET/存储目录/PG 连接串）
-│  ├─ Options.cs                # 配置 POCO
-│  ├─ Scp/
-│  │  ├─ DicomScpService.cs     # fo-dicom SCP（C-ECHO / C-STORE）
-│  │  ├─ IStoreHandler.cs       # 存储编排接口
-│  │  ├─ StoreHandler.cs        # 落盘+入库编排
-│  │  ├─ StorageSopClassRegistry.cs  # Storage SOP Class 白名单
-│  │  └─ ScpServiceRuntime.cs   # fo-dicom 静态运行时注入
-│  ├─ Storage/
-│  │  └─ FileStorage.cs         # 内部 ID 生成 + 分片落盘
-│  └─ Index/
-│     ├─ InstanceIndex.cs       # Npgsql 访问
-│     └─ Schema.sql             # 幂等建表 DDL
-└─ tests/OIS.DicomScp.Tests/
-   └─ ScpIntegrationTests.cs    # 集成测试（C-ECHO/C-STORE/去重/元数据/异常）
+├─ OIS.DicomScp.Core/            # 核心类库（net10.0，无 WPF 依赖；CLI 与 WPF 共用）
+│  ├─ ScpHost.cs                 # IScpHost/ScpHost：本地 SCP 启停封装（幂等，AC-08）
+│  ├─ AppConfig.cs               # 配置模型（Scp/Scu/Storage/Postgres 节）
+│  ├─ ConfigStore.cs             # IConfigStore/ConfigStore：读-改-写 + 原子落盘（temp+Move）
+│  ├─ Options.cs                 # 配置 POCO
+│  ├─ Scp/                       # fo-dicom SCP（C-ECHO/C-STORE）+ 落盘编排（task-001）
+│  ├─ Storage/FileStorage.cs     # 内部 ID 生成 + 分片落盘
+│  ├─ Index/                     # Npgsql 访问 + IInstanceQuery/InstanceRow + Schema.sql
+│  └─ Scu/                       # 出站 SCU（task-002）+ IForwardLogQuery/ForwardLogRow
+├─ OIS.DicomScp/                 # 控制台 host（net10.0）
+│  ├─ Program.cs                 # 入口：读配置 → 幂等建表 → SCP 服务 / SCU CLI
+│  └─ appsettings.json
+├─ OIS.DicomScp.Wpf/             # WPF 管理控制台（net10.0-windows，UseWPF；task-003）
+│  ├─ App.xaml(.cs)              # 启动组装 ConsoleServices；失败可见弹窗
+│  ├─ MainWindow.xaml(.cs)       # 五页签主窗口（实例浏览/详情核对/远程SCP配置/转发+历史/服务状态）
+│  ├─ Composition/ConsoleServices.cs   # 组装：配置/索引/SCU/SCP 宿主 → 5 个 ViewModel
+│  ├─ Commands/                  # IAppCommand/RelayCommand/AppCommandBridge（不依赖 WPF 类型）
+│  ├─ ViewModels/                # 5 个 headless ViewModel（不引用 WPF 命名空间，AC-10）
+│  ├─ Views/                     # 5 个 XAML 视图（代码后置仅做 AppCommandBridge 接线）
+│  └─ appsettings.json
+└─ tests/
+   ├─ OIS.DicomScp.Tests/        # Core + host 集成测试（需 localhost PG；27 项）
+   └─ OIS.DicomScp.Wpf.Tests/    # WPF ViewModel headless 测试（fakes；48 项；无需 PG/网络/WPF 窗口）
 ```
 
 ## 一致性抉择（写清，AC-04/AC-05）
@@ -62,7 +68,8 @@ src/OIS.DicomScp/
 
 ```bash
 dotnet build OIS.DicomScp.sln
-dotnet test  OIS.DicomScp.sln   # 需要 localhost:5432 的 PostgreSQL dicom 库
+dotnet test  OIS.DicomScp.sln   # OIS.DicomScp.Tests 需要 localhost:5432 的 PostgreSQL dicom 库；
+                                # OIS.DicomScp.Wpf.Tests 为 headless（fakes + 临时目录真实 DICOM 文件），无需 PG
 ```
 
 ## 运行
@@ -193,3 +200,47 @@ psql -h localhost -p 5432 -U postgres -d dicom -c \
 ```
 
 - 同实例重复转发**追加多行**（不覆盖首次记录；去重策略由调用方决定）。
+
+---
+
+# task-003 WPF 管理控制台
+
+五页签 MVVM 桌面控制台：**实例浏览 / 详情核对 / 远程 SCP 配置 / 转发 + 历史 / 服务状态**（spec：`docs/tasks/003/spec.md`，AC-01~AC-10）。
+
+## 目标框架（task-003 记录）
+
+| 项目 | TFM | 说明 |
+| --- | --- | --- |
+| `OIS.DicomScp.Core` | `net10.0` | 纯类库；CLI host 与 WPF 共用（task-003 自 host 抽出，搬家不重写） |
+| `OIS.DicomScp`（控制台 host） | `net10.0` | CLI 行为不变（AC-01 冒烟复核） |
+| `OIS.DicomScp.Wpf` | **`net10.0-windows`** | `UseWPF`；.NET 10 SDK（10.0.300）构建通过，无需回退 net8.0 |
+| `OIS.DicomScp.Wpf.Tests` | **`net10.0-windows`** | 须匹配 WPF 项目 TFM（普通 `net10.0` 无法引用 `net10.0-windows`）；**headless**：不启用 `UseWPF`、不打开任何窗口，在 Windows 桌面运行时上运行 |
+
+## 运行
+
+```bash
+dotnet run --project OIS.DicomScp.Wpf/OIS.DicomScp.Wpf.csproj
+```
+
+启动时从 exe 目录 `appsettings.json` 组装（端口/AET/存储目录/PG/远程 SCP 目标列表）；
+PG 建表失败仅记日志不阻断启动（控制台可继续用，涉及库的页签给出可见错误）。
+
+- **实例浏览**：按 PatientID / StudyInstanceUID / Modality / 入库时间范围（UTC，`yyyy-MM-dd HH:mm`）过滤（空白=不过滤，trim；默认取最近 200 行，received_at 倒序）；「核对」联动到详情核对页签；查询失败显示明确错误 + 空结果，不静默。
+- **详情核对**：fo-dicom 打开 `<存储目录>/<file_path>` 原文件，比对 SOPInstanceUID / PatientID / StudyInstanceUID / Modality / StudyDate 与库记录——**严格原样字符串相等**（StudyDate 保持 `YYYYMMDD`，缺失=null，不做时区/格式/大小写转换，AC-09）；文件缺失/损坏 → 明确错误状态，不崩溃。
+- **远程 SCP 配置**：编辑目标列表（Name/Host/Port/CalledAe/CallingAe/Protocol）；保存前校验（Name 非空且 Ordinal 唯一、Host 非空、Port 1–65535、CalledAe 已配置不得空白、协议仅 DICOM）；校验拒绝 → 配置保持原样 + 明确原因；通过 → 读-改-写原子落盘，**其他配置节（Scp/Storage/Postgres 与全局 calling AE）不丢失**。
+- **转发 + 历史**：选目标 C-ECHO 连通验证 / 选实例 C-STORE 转发（按 SOPInstanceUID，原文无损）；结果与原因可见；转发后自动刷新 `forward_log` 最近 50 行。
+- **服务状态**：显示配置端口/AET/运行状态/实例总数（PG）；启动幂等（已运行 → 「服务已在运行」提示而非错误）、停止未运行 → 「服务未运行」提示；实例数查询失败显示「—」，**不臆造 0**。
+- 失败一律可见：各页签操作失败给出原因文本，无空 catch、无静默吞错（AC-02~AC-09 纪律）。
+
+## Headless 测试（AC-10）
+
+`OIS.DicomScp.Wpf.Tests`（48 项）用 fake 替身（`FakeInstanceQuery` / `FakeForwardLogQuery` / `FakeScu` / `FakeConfigStore` / `FakeScpHost`）驱动 5 个 ViewModel 的 AC-02~AC-09 逻辑分支；
+详情核对测试在**临时存储根写入真实 fo-dicom 文件**（全一致 / 单字段不一致 / 文件缺失字段 / 双缺失 / 文件缺失 / 文件损坏）。
+
+ViewModel 层不引用 WPF 命名空间：命令抽象 `IAppCommand`/`RelayCommand`（`Commands/`，纯 .NET）+ `AppCommandBridge`（桥接 `System.Windows.Input.ICommand`）；
+对 `ViewModels/` 源码做 WPF 命名空间 grep = 0 命中（AC-10 判据，CI 可复验）。
+
+## CLI（重构后不变）
+
+控制台 host 的 `scp` / `echo-scu` / `store-scu` 命令行行为不变（AC-01 冒烟复核通过）；
+`IScpHost` 封装同一套 fo-dicom 组装逻辑（幂等建表 → 文件存储 → 存储编排注入 → 服务容器初始化），供 WPF「服务状态」页签与测试复用。
