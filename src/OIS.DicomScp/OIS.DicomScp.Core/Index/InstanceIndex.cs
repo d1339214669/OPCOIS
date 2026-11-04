@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace OIS.DicomScp.Index;
 
@@ -10,7 +11,7 @@ namespace OIS.DicomScp.Index;
 /// 建表 DDL 见 <c>Index/Schema.sql</c>，用 <c>CREATE TABLE IF NOT EXISTS</c> 保证幂等（AC-02），
 /// 重复启动不报错。<c>sop_instance_uid</c> 带 <c>UNIQUE</c> 约束，配合 <c>ON CONFLICT</c> 处理同实例去重（AC-05）。
 /// </remarks>
-public sealed class InstanceIndex
+public sealed class InstanceIndex : IInstanceQuery
 {
     private readonly string _connectionString;
     private readonly ILogger _logger;
@@ -175,4 +176,98 @@ LIMIT 1";
 
     private static string? GetOrNull(NpgsqlDataReader reader, int ordinal)
         => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    /// <summary>
+    /// 查询 dicom_instance 行（AC-02 实例浏览）：
+    /// 按 PatientID / StudyInstanceUID / Modality / received_at 时间范围过滤（参数为 null 则不过滤），
+    /// 按 received_at 倒序，最多返回 <paramref name="take"/> 行；过滤无结果返回空集合（合法，非错误）。
+    /// 返回字段全部为库中原样字符串（UID/StudyDate 不做时区/格式/大小写/trim 转换，AC-09）。
+    /// </summary>
+    /// <param name="patientId">PatientID 过滤（null 不过滤）。</param>
+    /// <param name="studyInstanceUid">StudyInstanceUID 过滤（null 不过滤）。</param>
+    /// <param name="modality">Modality 过滤（null 不过滤）。</param>
+    /// <param name="fromUtc">received_at 下界（含，UTC；null 不过滤）。</param>
+    /// <param name="toUtc">received_at 上界（含，UTC；null 不过滤）。</param>
+    /// <param name="take">最多返回行数（必须 &gt;= 1）。</param>
+    public async Task<IReadOnlyList<InstanceRow>> QueryInstancesAsync(
+        string? patientId,
+        string? studyInstanceUid,
+        string? modality,
+        DateTime? fromUtc,
+        DateTime? toUtc,
+        int take,
+        CancellationToken ct = default)
+    {
+        if (take <= 0)
+            throw new ArgumentOutOfRangeException(nameof(take), take, "take 必须 >= 1");
+
+        const string sql = @"
+SELECT internal_id, sop_instance_uid, sop_class_uid, patient_id, patient_name,
+       study_instance_uid, series_instance_uid, modality, study_date, study_time,
+       study_description, series_number, instance_number, file_path, file_size_bytes,
+       received_at
+FROM dicom_instance
+WHERE (@patient_id IS NULL OR patient_id = @patient_id)
+  AND (@study_uid IS NULL OR study_instance_uid = @study_uid)
+  AND (@modality IS NULL OR modality = @modality)
+  AND (@from_utc IS NULL OR received_at >= @from_utc)
+  AND (@to_utc IS NULL OR received_at <= @to_utc)
+ORDER BY received_at DESC
+LIMIT @take";
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        // 显式声明参数类型：过滤参数为 DBNull 时 PostgreSQL 无法从 `@p IS NULL` 推断类型（42P08），
+        // 必须带类型声明（Varchar / TimestampTz），否则查询直接失败。
+        cmd.Parameters.Add(new NpgsqlParameter("patient_id", NpgsqlDbType.Varchar) { Value = (object?)patientId ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("study_uid", NpgsqlDbType.Varchar) { Value = (object?)studyInstanceUid ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("modality", NpgsqlDbType.Varchar) { Value = (object?)modality ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("from_utc", NpgsqlDbType.TimestampTz) { Value = (object?)fromUtc ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("to_utc", NpgsqlDbType.TimestampTz) { Value = (object?)toUtc ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("take", NpgsqlDbType.Integer) { Value = take });
+
+        var rows = new List<InstanceRow>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            rows.Add(new InstanceRow
+            {
+                InternalId = reader.GetString(0),
+                SopInstanceUid = reader.GetString(1),
+                SopClassUid = GetOrNull(reader, 2),
+                PatientId = GetOrNull(reader, 3),
+                PatientName = GetOrNull(reader, 4),
+                StudyInstanceUid = GetOrNull(reader, 5),
+                SeriesInstanceUid = GetOrNull(reader, 6),
+                Modality = GetOrNull(reader, 7),
+                StudyDate = GetOrNull(reader, 8),
+                StudyTime = GetOrNull(reader, 9),
+                StudyDescription = GetOrNull(reader, 10),
+                SeriesNumber = GetOrNull(reader, 11),
+                InstanceNumber = GetOrNull(reader, 12),
+                FilePath = reader.GetString(13),
+                FileSizeBytes = reader.IsDBNull(14) ? null : reader.GetInt64(14),
+                ReceivedAt = reader.GetDateTime(15),
+            });
+        }
+        return rows;
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CountAsync(CancellationToken ct = default)
+    {
+        const string sql = "SELECT COUNT(*) FROM dicom_instance";
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is null ? 0 : Convert.ToInt32(result);
+    }
+
+    /// <summary>spec §6.2 <see cref="IInstanceQuery.QueryAsync"/> 的显式实现：委托给 <see cref="QueryInstancesAsync"/>（spec §6.1 命名）。</summary>
+    Task<IReadOnlyList<InstanceRow>> IInstanceQuery.QueryAsync(
+        string? patientId, string? studyInstanceUid, string? modality,
+        DateTime? fromUtc, DateTime? toUtc, int take, CancellationToken ct)
+        => QueryInstancesAsync(patientId, studyInstanceUid, modality, fromUtc, toUtc, take, ct);
 }
