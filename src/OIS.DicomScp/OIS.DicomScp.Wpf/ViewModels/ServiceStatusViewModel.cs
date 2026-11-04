@@ -180,8 +180,8 @@ public sealed class ServiceStatusViewModel : ViewModelBase
         {
             InstanceCount = await _query.CountAsync(CancellationToken.None);
             IsRunning = _host.IsRunning;
-            if (ErrorText is null)
-                StatusText = $"实例总数 {InstanceCount}（PostgreSQL）";
+            ErrorText = null; // 成功刷新 → 清除此前的错误（状态复位，AC-09）
+            StatusText = $"实例总数 {InstanceCount}（PostgreSQL）";
         }
         catch (Exception ex)
         {

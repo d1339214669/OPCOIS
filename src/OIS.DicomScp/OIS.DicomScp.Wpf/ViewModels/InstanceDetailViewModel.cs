@@ -130,12 +130,25 @@ public sealed class InstanceDetailViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// 标签 → 报告列显示名（fo-dicom 5.x 的 <c>DicomTag.ToString()</c> 返回「(GGGG,TTTT)」而非常量名，
+    /// 报告列用常量名可读性更好；未知标签回退为标签码）。
+    /// </summary>
+    private static readonly Dictionary<DicomTag, string> TagNames = new()
+    {
+        [DicomTag.SOPInstanceUID] = "SOPInstanceUID",
+        [DicomTag.PatientID] = "PatientID",
+        [DicomTag.StudyInstanceUID] = "StudyInstanceUID",
+        [DicomTag.Modality] = "Modality",
+        [DicomTag.StudyDate] = "StudyDate",
+    };
+
     /// <summary>单标签对比：文件值 vs 库值，严格字符串相等（null 对 null 一致；缺失为 null，不臆造，AC-09）。</summary>
     private static FieldCheck Check(DicomTag tag, DicomDataset ds, string? dbValue)
     {
         string? fileValue = ds.TryGetString(tag, out var v) && v.Length > 0 ? v : null;
         return new FieldCheck(
-            tag.ToString(),
+            TagNames.TryGetValue(tag, out var name) ? name : tag.ToString(),
             fileValue,
             dbValue,
             string.Equals(fileValue, dbValue, StringComparison.Ordinal));
