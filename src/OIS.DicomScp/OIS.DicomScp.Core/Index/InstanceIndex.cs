@@ -36,14 +36,17 @@ public sealed class InstanceIndex : IInstanceQuery
         if (!File.Exists(path))
             throw new FileNotFoundException($"找不到建表 DDL 文件: {path}", path);
 
-        var ddl = await File.ReadAllTextAsync(path);
+        // 全部 ConfigureAwait(false)：本方法可能被 UI 线程以 .GetResult() 同步等待
+        // （ConsoleServices 组装路径）。若 await 的 continuation 回投到被阻塞的
+        // DispatcherSynchronizationContext，将死锁（WPF 窗口永不显示）。保持上下文无关。
+        var ddl = await File.ReadAllTextAsync(path).ConfigureAwait(false);
 
         await using var conn = new NpgsqlConnection(_connectionString);
-        await conn.OpenAsync();
+        await conn.OpenAsync().ConfigureAwait(false);
         await using var cmd = new NpgsqlCommand(ddl, conn);
         try
         {
-            await cmd.ExecuteNonQueryAsync();
+            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
         catch (PostgresException ex) when (ex.SqlState == "42P07")
         {

@@ -16,7 +16,12 @@ public partial class App : System.Windows.Application
 
         try
         {
-            _services = ConsoleServices.Create();
+            // 关键：绝不在 UI 线程上直接同步等待可能跨线程完成的异步初始化。
+            // 若 ConsoleServices.Create() 内的任何 await 的 continuation 被回投到
+            // 当前被 GetResult() 阻塞的 Dispatcher（DispatcherSynchronizationContext），
+            // 将死锁——进程活着但主窗口永不显示（bugfix 2026-11-05 修复的真实故障）。
+            // Task.Run 让组装在线程池线程（无同步上下文）完成，continuation 留在线程池，无死锁。
+            _services = Task.Run(ConsoleServices.Create).GetAwaiter().GetResult();
             var window = new MainWindow(_services);
             MainWindow = window;
             window.Show();
